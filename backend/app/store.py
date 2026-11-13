@@ -11,12 +11,26 @@ from app.seed import SEED_ROWS
 
 class Store:
     def __init__(self) -> None:
-        self._tables: dict[str, list[dict[str, Any]]] = {
+        # 示例数据只作为初始态保留一份，重置时从这里重新拷贝，避免动作改过的字段串味。
+        self._seed: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
+        }
+        self._tables: dict[str, list[dict[str, Any]]] = {
+            name: [dict(row) for row in rows] for name, rows in self._seed.items()
+        }
+        # 快照、联动清单这类支撑表只在业务内部使用，不参与运营概览的模块统计。
+        self._hidden: set[str] = {
+            "report_snapshot", "report_generation_log", "audit_archive",
+        }
+
+    def reset(self) -> None:
+        """把仓库恢复到初始示例数据；测试与本地反复演练时用。"""
+        self._tables = {
+            name: [dict(row) for row in rows] for name, rows in self._seed.items()
         }
 
     def module_names(self) -> list[str]:
-        return sorted(self._tables)
+        return sorted(name for name in self._tables if name not in self._hidden)
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
@@ -26,6 +40,18 @@ class Store:
             if int(row.get("id", 0)) == entry_id:
                 return row
         return None
+
+    def drop(self, module: str, predicate: Any) -> list[dict[str, Any]]:
+        """按条件移除行并返回被移除的行；用于同周期快照的原子替换。"""
+        kept: list[dict[str, Any]] = []
+        removed: list[dict[str, Any]] = []
+        for row in self.rows(module):
+            if predicate(row):
+                removed.append(row)
+            else:
+                kept.append(row)
+        self._tables[module] = kept
+        return removed
 
     def overview(self) -> dict[str, object]:
         modules: list[dict[str, object]] = []

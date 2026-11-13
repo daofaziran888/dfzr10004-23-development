@@ -18,6 +18,20 @@
       </article>
     </div>
 
+    <div class="tab-bar">
+      <button
+        v-for="tab in tabs"
+        :key="tab.key"
+        class="btn"
+        :class="{ active: activeTab === tab.key }"
+        type="button"
+        @click="switchTab(tab.key)"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <template v-if="activeTab === 'list'">
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
@@ -54,6 +68,75 @@
         </tr>
       </tbody>
     </table>
+    </template>
+
+    <template v-else-if="activeTab === 'archive'">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="section-title" style="margin: 0">采集审计记录生成的待归档清单</span>
+          <span class="hint">
+            待归档 {{ archiveStats['待归档'] ?? 0 }} · 已归档 {{ archiveStats['已归档'] ?? 0 }} ·
+            已取代 {{ archiveStats['已取代'] ?? 0 }}
+          </span>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>清单编号</th><th>报表编号</th><th>快照编号</th><th>统计周期</th>
+              <th>模板编号</th><th>模板版本</th><th>生成时间</th><th>状态</th><th>回写状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in archives" :key="String(item.id)">
+              <td>{{ item['清单编号'] }}</td>
+              <td>{{ item['报表编号'] }}</td>
+              <td>{{ item['快照编号'] }}</td>
+              <td>{{ item['统计周期'] }}</td>
+              <td>{{ item['模板编号'] }}</td>
+              <td>{{ item['模板版本'] }}</td>
+              <td>{{ item['生成时间'] }}</td>
+              <td>{{ item['状态'] }}</td>
+              <td>{{ item['回写状态'] }}<span v-if="item['回写结果']"> · {{ item['回写结果'] }}</span></td>
+            </tr>
+            <tr v-if="!archives.length">
+              <td colspan="9" class="empty-state">暂无待归档清单，先生成一份统计报表快照</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
+    <template v-else>
+      <div class="panel">
+        <div class="section-title" style="margin-top: 0">生成结果回写到审计清单</div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>记录编号</th><th>采集计划</th><th>执行人</th><th>执行时间</th>
+              <th>结果摘要</th><th>清单编号</th><th>清单状态</th><th>回写结果</th>
+              <th>快照编号</th><th>模板版本</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in backwrites" :key="String(item['审计记录id'])">
+              <td>{{ item['记录编号'] }}</td>
+              <td>{{ item['采集计划'] }}</td>
+              <td>{{ item['执行人'] }}</td>
+              <td>{{ item['执行时间'] }}</td>
+              <td>{{ item['结果摘要'] }}</td>
+              <td>{{ item['清单编号'] || '—' }}</td>
+              <td>{{ item['清单状态'] }}</td>
+              <td>{{ item['回写结果'] }}</td>
+              <td>{{ item['快照编号'] || '—' }}</td>
+              <td>{{ item['模板版本'] || '—' }}</td>
+            </tr>
+            <tr v-if="!backwrites.length">
+              <td colspan="10" class="empty-state">暂无统计报表生成记录</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
 
     <footer class="page-foot">
       <span>共 {{ total }} 条采集审计日志记录</span>
@@ -63,7 +146,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
@@ -73,13 +156,56 @@ const ENDPOINT = '/api/audit'
 const columns = ["记录编号", "操作类型", "采集计划", "执行人", "执行时间", "结果摘要", "变更内容", "复核状态"]
 const actions = ["标记复核", "归档记录"]
 const statuses = ["已记录", "已复核", "已归档"]
-const stats = [{"label": "审计记录总数", "value": 0}, {"label": "已复核记录", "value": 0}, {"label": "已归档记录", "value": 0}]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+const tabs = [
+  { key: 'list', label: '审计记录' },
+  { key: 'archive', label: '待归档清单' },
+  { key: 'backwrite', label: '回写结果' },
+]
+const activeTab = ref('list')
+const archives = ref<Row[]>([])
+const archiveStats = ref<Record<string, number>>({})
+const backwrites = ref<Row[]>([])
+const stats = computed(() => [
+  { label: '审计记录总数', value: total.value },
+  { label: '已复核记录', value: rows.value.filter((row) => row.status === '已复核').length },
+  { label: '待归档清单', value: archiveStats.value['待归档'] ?? 0 },
+])
+
+function switchTab(tab: string) {
+  activeTab.value = tab
+  if (tab === 'archive') void loadArchives()
+  if (tab === 'backwrite') void loadBackwrites()
+}
+
+async function loadArchives() {
+  try {
+    const response = await request(`${ENDPOINT}/archive-clause`)
+    if (!response.ok) throw new Error('待归档清单读取失败')
+    const payload = await response.json()
+    archives.value = payload.items ?? []
+    archiveStats.value = payload['统计'] ?? {}
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '待归档清单读取失败'
+  }
+}
+
+async function loadBackwrites() {
+  try {
+    const response = await request(`${ENDPOINT}/backwrite`)
+    if (!response.ok) throw new Error('审计清单回写结果读取失败')
+    const payload = await response.json()
+    backwrites.value = payload.items ?? []
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '审计清单回写结果读取失败'
+  }
+}
 
 function resetFilters() {
   filters.value = {}
@@ -126,5 +252,8 @@ async function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  void reload()
+  void loadArchives()
+})
 </script>

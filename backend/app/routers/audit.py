@@ -1,4 +1,7 @@
-"""采集审计日志接口：维护审计记录，覆盖标记复核、归档记录等动作。"""
+"""采集审计日志接口：维护审计记录，覆盖标记复核、归档记录等动作。
+
+报表生成动作会在这里留下两条联动结果：审计记录本身，以及由它生成的待归档清单。
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -30,6 +33,29 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/archive-clause", response_model=dict)
+def archive_clause(
+    keyword: str | None = Query(default=None, description="按报表编号或清单编号检索"),
+) -> dict:
+    """采集审计记录生成待归档清单：报表生成动作牵动的归档入口。"""
+    return service.archive_clause(keyword=keyword)
+
+
+@router.get("/backwrite", response_model=dict)
+def audit_backwrite(
+    audit_id: int | None = Query(default=None, description="只看指定审计记录的回写结果"),
+) -> dict:
+    """生成结果回写到审计清单：展示审计记录、归档清单与快照的对应关系。"""
+    return service.audit_backwrite(audit_id)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出采集审计日志清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "audit", "total": total, "items": items}
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条审计记录明细；不存在时给出可读的错误说明。"""
@@ -56,10 +82,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出采集审计日志清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "audit", "total": total, "items": items}

@@ -1,4 +1,7 @@
-"""采集格式转换接口：维护转换模板，覆盖提交校验、启用模板、停用模板等动作。"""
+"""采集格式转换接口：维护转换模板，覆盖提交校验、启用模板、停用模板等动作。
+
+模板清单额外返回「被哪些统计报表引用」，并支持修改映射规则后自动升版本。
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -12,7 +15,7 @@ router = APIRouter(prefix="/api/transform", tags=["采集格式转换"])
 
 service = TransformService()
 
-LIST_FIELDS = ["模板编号", "输入格式", "输出格式", "映射规则", "编码设置", "分隔符", "换行策略", "是否启用"]
+LIST_FIELDS = ["模板编号", "输入格式", "输出格式", "映射规则", "编码设置", "分隔符", "换行策略", "是否启用", "模板版本"]
 STATUSES = ["草稿", "待校验", "已启用", "已停用"]
 
 
@@ -28,6 +31,19 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/references", response_model=dict)
+def references_overview() -> dict:
+    """转换模板清单的联动入口：显示每个模板被哪些统计报表引用。"""
+    return service.references_overview()
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出采集格式转换清单：返回当前过滤条件下的全量数据（含引用报表）。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "transform", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -50,16 +66,9 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条转换模板执行提交校验、启用模板、停用模板；不允许的动作会被拦下并说明原因。"""
+    """对单条转换模板执行提交校验、启用模板、停用模板、更新映射规则。"""
     action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+    entry, message = service.run_action(entry_id, action, payload.values)
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出采集格式转换清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "transform", "total": total, "items": items}
